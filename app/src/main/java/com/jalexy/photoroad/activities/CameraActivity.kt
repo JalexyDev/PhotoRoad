@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.IntentSender
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.hardware.SensorManager
@@ -19,11 +18,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatEditText
 import androidx.cardview.widget.CardView
-import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.google.android.gms.common.api.ResolvableApiException
-import com.google.android.gms.location.*
 import com.jalexy.photoroad.R
 import com.jalexy.photoroad.controllers.CameraController
 import com.jalexy.photoroad.controllers.GpsController
@@ -60,7 +56,7 @@ class CameraActivity : AppCompatActivity(), OrientationManager.OrientationListen
             } else {
                 Toast.makeText(
                     this,
-                    "Permissions not granted by the user",
+                    "Пользователь не дал нужного разрешения",
                     Toast.LENGTH_SHORT
                 ).show()
 
@@ -72,6 +68,8 @@ class CameraActivity : AppCompatActivity(), OrientationManager.OrientationListen
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_camera)
+
+        supportActionBar?.hide()
 
         @Suppress("DEPRECATION")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -87,7 +85,7 @@ class CameraActivity : AppCompatActivity(), OrientationManager.OrientationListen
 
         gpsController = GpsController(this, object : GpsController.OnTrack {
             override fun onUpdate() {
-                cameraController.takePhoto()
+                cameraController.takePhotoInLocation(gpsController.lastLocation)
                 sessionPhotoCount++
                 photoCountText.text = sessionPhotoCount.toString()
             }
@@ -203,11 +201,14 @@ class CameraActivity : AppCompatActivity(), OrientationManager.OrientationListen
     override fun onPause() {
         super.onPause()
 
+        cameraController.unregisterReceiver()
         gpsController.removeLocationUpdates()
     }
 
     override fun onResume() {
         super.onResume()
+
+        cameraController.registerReceiver()
 
         setPhotoMode(gpsController.locationUpdateState)
 

@@ -21,7 +21,7 @@ class GpsController(private val activity: AppCompatActivity, private val onTrack
     private lateinit var locationCallback: LocationCallback
     private lateinit var locationRequest: LocationRequest
 
-    private var lastLocation: Location? = null
+    var lastLocation: Location? = null
 
     fun removeLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
@@ -41,9 +41,8 @@ class GpsController(private val activity: AppCompatActivity, private val onTrack
 
                     val hdop = currentLocation.accuracy / 5
 
-                    Log.i("Test", "hdop = $hdop")
                     // точность достаточно велика
-                    if (hdop > 5f) {
+                    if (hdop > 1f) {
 
                         // и пройденное растояние больше указанного интервала
                         val lastL = lastLocation
@@ -53,7 +52,6 @@ class GpsController(private val activity: AppCompatActivity, private val onTrack
                         //если мы первый раз фоткаем, то можно и так
                     } else enoughDistance = lastLocation == null
 
-                    Log.i("Test", "enoughDistance = $enoughDistance")
                     // обновляем точку отсчета и делаем фотку
                     if (enoughDistance) {
                         lastLocation = currentLocation

@@ -1,5 +1,6 @@
 package com.jalexy.photoroad.controllers
 
+import android.location.Location
 import android.net.Uri
 import android.util.Log
 import android.widget.Toast
@@ -8,14 +9,7 @@ import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
-import java.io.File
-import java.lang.Exception
-import java.nio.ByteBuffer
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.concurrent.Executors
-
-typealias LumaListener = (luma: Double) -> Unit
 
 class CameraController(val activity: AppCompatActivity, private val viewFinder: PreviewView) {
 
@@ -24,7 +18,7 @@ class CameraController(val activity: AppCompatActivity, private val viewFinder: 
 
     private var imageCapture: ImageCapture? = null
 
-    fun takePhoto() {
+    fun takePhotoInLocation(location: Location?) {
         val imageCapture = imageCapture ?: return
 
         // Create time-stamped output file to hold the image
@@ -40,15 +34,15 @@ class CameraController(val activity: AppCompatActivity, private val viewFinder: 
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     val saveUri = Uri.fromFile(photoFile)
 
-                    photoFileController.savePhoto(saveUri)
+                    photoFileController.savePhoto(saveUri, location)
 
-                    val msg = "Photo capture succeeded: ${saveUri.path}"
+                    val msg = "Сделана фотография: ${saveUri.path}"
                     Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exception.message}", exception)
+                    Log.e(TAG, "Не удалось сделать фото: ${exception.message}", exception)
                 }
             }
         )
@@ -68,53 +62,30 @@ class CameraController(val activity: AppCompatActivity, private val viewFinder: 
 
             imageCapture = ImageCapture.Builder().build()
 
-            val imageAnalyzer = ImageAnalysis.Builder()
-                .build()
-                .also {
-                    it.setAnalyzer(cameraExecutor, LuminosityAnalyzer { luma ->
-                        Log.d(TAG, "Average luminosity: $luma")
-                    })
-                }
-
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
-                    activity, cameraSelector, preview, imageCapture, imageAnalyzer
+                    activity, cameraSelector, preview, imageCapture
                 )
 
             } catch (ex: Exception) {
-                Log.e(TAG, "Use case binding failed", ex)
+                Log.e(TAG, "Не удалось прибиндить камеру", ex)
             }
         }, ContextCompat.getMainExecutor(activity))
     }
 
-    fun shutDown() {
-        cameraExecutor.shutdown()
+    fun registerReceiver() {
+        photoFileController.registerReceiver()
     }
 
+    fun unregisterReceiver() {
+        photoFileController.unregister()
+    }
 
-    //todo разобраться можно ли сюда впихнуть полезный функционал. Если нет - удалить!
-    private class LuminosityAnalyzer(private val listener: LumaListener) : ImageAnalysis.Analyzer {
-
-        private fun ByteBuffer.toByteArray(): ByteArray {
-            rewind()
-            val data = ByteArray(remaining())
-            get(data)
-            return data
-        }
-
-        override fun analyze(image: ImageProxy) {
-            val buffer = image.planes[0].buffer
-            val data = buffer.toByteArray()
-            val pixels = data.map { it.toInt() and 0xFF }
-            val luma = pixels.average()
-
-            listener(luma)
-
-            image.close()
-        }
+    fun shutDown() {
+        cameraExecutor.shutdown()
     }
 
     companion object {

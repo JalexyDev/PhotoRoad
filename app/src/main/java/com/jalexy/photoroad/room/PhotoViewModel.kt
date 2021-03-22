@@ -22,25 +22,15 @@ class PhotoViewModel(application: Application) : AndroidViewModel(application) {
         repository.insert(photo)
     }
 
-    fun getUnsentPhotoList() = repository.getUnsentPhotos()
-
-    fun deleteAllPhotos() {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.deleteAll()
-        }
+    fun updateSent(photo: Photo) = viewModelScope.launch(Dispatchers.IO) {
+        repository.updateSent(photo)
     }
 
-    fun deleteSentPhotos() {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.deleteSentPhotos()
-        }
+    fun deleteAllPhotos() = viewModelScope.launch(Dispatchers.IO) {
+        repository.deleteAll()
     }
 
-    fun deletePhoto(photo: Photo) {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.deletePhoto(photo)
-        }
+    fun deleteSentPhotos() = viewModelScope.launch(Dispatchers.IO) {
+        repository.deleteSentPhotos()
     }
-
-
 }

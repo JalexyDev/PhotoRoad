@@ -1,29 +1,100 @@
 package com.jalexy.photoroad.controllers
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.location.Location
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toFile
 import androidx.core.net.toUri
-import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.map
+import com.jalexy.photoroad.PhotoCallback
 import com.jalexy.photoroad.room.Photo
 import com.jalexy.photoroad.room.PhotoViewModel
+import okhttp3.Call
+import okhttp3.Response
 import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.stream.Collectors
+
 
 class PhotoFileController(private val activity: AppCompatActivity) {
 
     companion object {
+        private const val TAG = "PhotoFileController"
+        private const val SUCCESS_CODE = "200"
         private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
+
+        private const val ACTION_INTERNET_CONNECTION_STATE_CHANGED =
+            "android.net.conn.CONNECTIVITY_CHANGE"
     }
 
+    enum class Filter { ALL, SENT }
+
     private val photoViewModel: PhotoViewModel by lazy {
-        ViewModelProvider(activity).get(PhotoViewModel::class.java) }
+        ViewModelProvider(activity).get(PhotoViewModel::class.java)
+    }
 
     private var outputDirectory = getOutputDirectory()
+    private val uploadController: UploadController by lazy { UploadController(activity) }
+
+    private val networkChangeReceiver: BroadcastReceiver by lazy {
+        object : BroadcastReceiver() {
+            override fun onReceive(p0: Context?, p1: Intent?) {
+
+                val action: String? = p1?.action
+                if (ACTION_INTERNET_CONNECTION_STATE_CHANGED == action) {
+                    Log.i(
+                        "Test",
+                        "О, что-то случилось с интернетом! connection = ${hasConnection()}"
+                    )
+
+                    if (hasConnection()) {
+
+                        sendNewPhotoListToServer()
+                    } else {
+
+                        uploadController.notifyConnectionLost()
+                    }
+                }
+            }
+        }
+    }
+
+    private val photoCallback: PhotoCallback by lazy {
+        object : PhotoCallback(activity) {
+
+            override fun onResponse(call: Call, response: Response) {
+                if (response.code.toString() == SUCCESS_CODE) {
+
+                    val notNullPhoto = photo
+                    notNullPhoto?.let {
+                        notNullPhoto.sent = true
+                        photoViewModel.updateSent(notNullPhoto)
+                        uploadController.sendNextPhotoInQueue()
+
+                        Log.i(TAG, "Фото отправлено: ${notNullPhoto.photoUri}")
+                    }
+                }
+            }
+        }
+    }
+
+    fun registerReceiver() {
+        val filter = IntentFilter()
+        filter.addAction(ACTION_INTERNET_CONNECTION_STATE_CHANGED)
+        activity.registerReceiver(networkChangeReceiver, filter)
+    }
+
+    fun unregister() {
+        activity.unregisterReceiver(networkChangeReceiver)
+    }
 
     fun createPhotoFile() = File(
         outputDirectory,
@@ -31,66 +102,100 @@ class PhotoFileController(private val activity: AppCompatActivity) {
             .format(System.currentTimeMillis()) + ".jpg"
     )
 
-    fun savePhoto(uri: Uri) {
-        savePhotoInBase(uri)
+    fun savePhoto(uri: Uri, location: Location?) {
 
-        if (canSend()) {
-            sendPhotoToServer(uri)
+        val photo: Photo = if (location != null) {
+            Photo(uri.toString(), false, location.latitude, location.longitude)
+        } else {
+            Photo(uri.toString(), false, 0.0, 0.0)
+        }
+
+        savePhotoInBase(photo)
+
+        if (hasConnection()) {
+            sendPhotoToServer(photo)
         }
     }
+
+    fun getLiveDataPhotoList() = photoViewModel.photoList
 
     fun sendNewPhotoListToServer() {
-        val newPhotos = getNewPhotoList()
-        //todo логика отправки списка фоток на сервер
+        photoViewModel.photoList.observe(activity, { photos ->
+            photos?.let {
+                val unsentPhotos = it.stream()
+                    .filter { photo -> !photo.sent }
+                    .collect(Collectors.toList())
+
+                if (unsentPhotos.isNotEmpty()) {
+                    uploadController.sendNewPhotoList(unsentPhotos, photoCallback)
+                }
+            }
+        })
     }
 
-    private fun sendPhotoToServer(photoUri: Uri) {
-        //todo отправка одного файла с фоткой на сервер
+    fun deletePhotos(filter: Filter) {
+        val photoList = photoViewModel.photoList.value
 
-        val inputStream = activity.contentResolver.openInputStream(photoUri)
-        inputStream?.use{input ->
+        when (filter) {
+            Filter.ALL -> photoViewModel.deleteAllPhotos()
+            Filter.SENT -> photoViewModel.deleteSentPhotos()
+        }
 
-            //todo тут вместо FileOutputStream использовать запись на сервер, напр через сокеты???
-            //todo а еще лучше см в еде отсылка фоток к отзывам
-            val out = FileOutputStream(File(photoUri.path))
-            val buf = ByteArray(1024)
-            var len: Int
-            while (input.read(buf).also { len = it } > 0) {
-                out.write(buf, 0, len)
+        if (photoList != null) {
+            for (photo in photoList) {
+
+                when (filter) {
+                    Filter.ALL -> deleteFile(photo.photoUri.toUri().toFile())
+                    Filter.SENT -> if (photo.sent) deleteFile(photo.photoUri.toUri().toFile())
+                }
             }
-
-            //todo после удачной отправки вставить изменить создать фотку с таким же uri
-            // и статусом sent = true вставить в базу (чтобы заменить)
-            out.close()
         }
     }
 
-    private fun savePhotoInBase(uri: Uri) {
-        val photo = Photo(uri.toString(), false)
+    private fun deleteFile(file: File) {
+        file.delete()
+        if (file.exists()) {
+            file.canonicalFile.delete()
+            if (file.exists()) {
+                activity.applicationContext.deleteFile(file.name)
+            }
+        }
+    }
+
+    private fun sendPhotoToServer(photo: Photo) {
+        uploadController.sendPhoto(photo, photoCallback)
+    }
+
+    private fun savePhotoInBase(photo: Photo) {
         photoViewModel.insert(photo)
     }
 
-    private fun canSend(): Boolean {
-        //todo если инет позволяет, шлем на сервер
-        return false
-    }
+    private fun hasConnection(): Boolean {
+        val connectivityManager =
+            activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    private fun getNewPhotoList(): LiveData<List<Uri>> {
-        return photoViewModel.getUnsentPhotoList().map {
-            it.map { photo ->
-                photo.photoUri.toUri()
+        connectivityManager?.let {
+
+            val capabilities =
+                it.getNetworkCapabilities(it.activeNetwork)
+
+            capabilities?.let { cap ->
+                return when {
+                    cap.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                            cap.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                            cap.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> true
+                    else -> false
+                }
             }
         }
+
+        return false
     }
 
     private fun getOutputDirectory(): File {
         val mediaDir = activity.externalMediaDirs.firstOrNull()?.let {
             File(it, "photo").apply { mkdirs() }
         }
-        return if (mediaDir != null && mediaDir.exists())
-            mediaDir
-        else
-            activity.filesDir
+        return if (mediaDir != null && mediaDir.exists()) mediaDir else activity.filesDir
     }
-
 }

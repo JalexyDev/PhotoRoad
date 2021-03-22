@@ -8,7 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-@Database(entities = arrayOf(Photo::class), version = 1, exportSchema = false)
+@Database(entities = arrayOf(Photo::class), version = 1)
 abstract class PhotoRoomDatabase : RoomDatabase() {
 
     abstract fun photoDao(): PhotoDao
@@ -23,7 +23,8 @@ abstract class PhotoRoomDatabase : RoomDatabase() {
                     context.applicationContext,
                     PhotoRoomDatabase::class.java,
                     "photo_database"
-                ).build()
+                )
+                    .build()
 
                 INSTANCE = instance
                 return instance
